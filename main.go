@@ -2,30 +2,71 @@ package tsc
 
 import (
 	"encoding/json"
+
 	"github.com/streadway/amqp"
 	"github.com/mcuadros/go-jsonschema-generator"
+	rh "github.com/michaelklishin/rabbit-hole"
 )
 
 type Config struct {
 	Name    string // service name
 	Event   string // event name
-	Url     string // rmq connection string, e.g. amqp://guest:guest@localhost:5672
+	URL     string // rmq connection string, e.g. amqp://guest:guest@localhost:5672
+	Vhost string
+	ApiURL string
+	ApiUser string
+	ApiPassword string
 	AutoAck bool
 }
 
 type Service struct {
 	Channel *amqp.Channel
 	Queue   *amqp.Queue
+	Client *rh.Client
 
 	ch     chan json.RawMessage
 	err    chan error
 	config Config
 }
 
+func New(cfg Config) Service {
+	return Service{
+		config: cfg,
+	}
+}
+
 type Handler func(in interface{}) (interface{}, error)
 
-func Liftoff(cfg Config, handler Handler) error {
-	conn, err := amqp.Dial(cfg.Url)
+func (s Service) lookForExchange() error {
+	exc, err := s.Client.GetExchange(s.config.Vhost, s.config.Event)
+	if err != nil {
+		return err
+	}
+	if exc == nil {
+		return s.createExchange()
+	}
+
+	// check type of an exchange
+
+	return nil
+}
+
+func (s Service) createExchange() error {
+	settings := rh.ExchangeSettings{
+		Type: "fanout",
+		Durable: false,
+		AutoDelete: false,
+	}
+
+	// Set type to exchange arguments
+
+	_, err := s.Client.DeclareExchange(s.config.Vhost, s.config.Event, settings)
+	
+	return err
+}
+
+func (s Service) Liftoff(handler Handler) error {
+	conn, err := amqp.Dial(s.config.URL)
 	if err != nil {
 		return err
 	}
@@ -37,10 +78,15 @@ func Liftoff(cfg Config, handler Handler) error {
 		return err
 	}
 	defer ch.Close()
+	s.Channel = ch
 
+	client, err := rh.NewClient(s.config.ApiURL, s.config.ApiUser, s.config.ApiPassword)
+	if err != nil {
+		return err
+	}
+	s.Client = client
 
-
-	return nil
+	return s.lookForExchange()
 }
 
 func detectType(in interface{}) string {
