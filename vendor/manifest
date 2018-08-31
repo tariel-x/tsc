@@ -1,0 +1,29 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "github.com/mcuadros/go-jsonschema-generator",
+			"repository": "https://github.com/mcuadros/go-jsonschema-generator",
+			"vcs": "git",
+			"revision": "821f57ef6082dacf56d3354643f2ef36e06ebf29",
+			"branch": "master",
+			"notests": true
+		},
+		{
+			"importpath": "github.com/michaelklishin/rabbit-hole",
+			"repository": "https://github.com/michaelklishin/rabbit-hole",
+			"vcs": "git",
+			"revision": "54e00efceb23bbd3850623abc83c8ecb10597773",
+			"branch": "master",
+			"notests": true
+		},
+		{
+			"importpath": "github.com/streadway/amqp",
+			"repository": "https://github.com/streadway/amqp",
+			"vcs": "git",
+			"revision": "70e15c650864f4fc47f5d3c82ea117285480895d",
+			"branch": "master",
+			"notests": true
+		}
+	]
+}

@@ -3,26 +3,26 @@ package tsc
 import (
 	"encoding/json"
 
-	"github.com/streadway/amqp"
 	"github.com/mcuadros/go-jsonschema-generator"
 	rh "github.com/michaelklishin/rabbit-hole"
+	"github.com/streadway/amqp"
 )
 
 type Config struct {
-	Name    string // service name
-	Event   string // event name
-	URL     string // rmq connection string, e.g. amqp://guest:guest@localhost:5672
-	Vhost string
-	ApiURL string
-	ApiUser string
-	ApiPassword string
-	AutoAck bool
+	Name     string // service name
+	Event    string // event name
+	URL      string // rmq connection string, e.g. amqp://guest:guest@localhost:5672
+	Vhost    string
+	APIURL   string
+	User     string
+	Password string
+	AutoAck  bool
 }
 
 type Service struct {
 	Channel *amqp.Channel
 	Queue   *amqp.Queue
-	Client *rh.Client
+	Client  *rh.Client
 
 	ch     chan json.RawMessage
 	err    chan error
@@ -53,15 +53,15 @@ func (s Service) lookForExchange() error {
 
 func (s Service) createExchange() error {
 	settings := rh.ExchangeSettings{
-		Type: "fanout",
-		Durable: false,
+		Type:       "fanout",
+		Durable:    false,
 		AutoDelete: false,
 	}
 
 	// Set type to exchange arguments
 
 	_, err := s.Client.DeclareExchange(s.config.Vhost, s.config.Event, settings)
-	
+
 	return err
 }
 
@@ -80,7 +80,7 @@ func (s Service) Liftoff(handler Handler) error {
 	defer ch.Close()
 	s.Channel = ch
 
-	client, err := rh.NewClient(s.config.ApiURL, s.config.ApiUser, s.config.ApiPassword)
+	client, err := rh.NewClient(s.config.APIURL, s.config.User, s.config.Password)
 	if err != nil {
 		return err
 	}
