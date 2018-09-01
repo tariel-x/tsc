@@ -1,13 +1,31 @@
 package main
 
+import (
+	"fmt"
+	"os"
+)
+
 // go:generate tsc DataIn DataOut
 
 type DataIn struct {
-	A string
+	A string `json:"a"`
 }
 
 type DataOut struct {
-	B int
+	B int `json:"b"`
 }
 
-func main() {}
+func main() {
+	err := Liftoff(
+		os.Getenv("RMQ"),
+		os.Getenv("RMQ_API"),
+		"example",
+		"ev_a",
+		"ev_b",
+		func(in DataIn) (DataOut, error) {
+			fmt.Println(in.A)
+			return DataOut{}, nil
+		},
+	)
+	die(err)
+}

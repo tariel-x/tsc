@@ -29,7 +29,7 @@
 			"importpath": "github.com/tariel-x/polyschema",
 			"repository": "https://github.com/tariel-x/polyschema",
 			"vcs": "git",
-			"revision": "c5ab637c24a7e44d0d4b8fa6b7dcf829a3b18a7b",
+			"revision": "e3fd2ad41df2a70e0dee992f9895bc64d768d4f1",
 			"branch": "master",
 			"notests": true
 		}
