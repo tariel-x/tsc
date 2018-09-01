@@ -24,6 +24,14 @@
 			"revision": "70e15c650864f4fc47f5d3c82ea117285480895d",
 			"branch": "master",
 			"notests": true
+		},
+		{
+			"importpath": "github.com/tariel-x/polyschema",
+			"repository": "https://github.com/tariel-x/polyschema",
+			"vcs": "git",
+			"revision": "c5ab637c24a7e44d0d4b8fa6b7dcf829a3b18a7b",
+			"branch": "master",
+			"notests": true
 		}
 	]
 }
