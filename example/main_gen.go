@@ -113,13 +113,13 @@ func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
 
 func (s Service) listen(handler Handler) error {
 	msgs, err := s.Channel.Consume(
-		s.Queue.Name, // queue
-		"",           // consumer
-		true,         // auto ack
-		false,        // exclusive
-		false,        // no local
-		false,        // no wait
-		nil,          // args
+		s.Queue.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func (s *Service) connectAPI() error {
 func (s *Service) createQueue() error {
 	q, err := s.Channel.QueueDeclare(
 		s.cfg.Name,
-		true,
+		false,
 		true,
 		true,
 		false,
