@@ -191,7 +191,7 @@ func (s Service) listen(handler Handler) error {
 	msgs, err := s.Channel.Consume(
 		s.Queue.Name,
 		"",
-		true,
+		false,
 		false,
 		false,
 		false,
@@ -201,20 +201,15 @@ func (s Service) listen(handler Handler) error {
 		return err
 	}
 
-	forever := make(chan bool)
-	fmt.Println("Liftoff")
-	go func() {
-		for msg := range msgs {
-			copy := msg
-			err := s.processInput(&copy, handler)
-			if err != nil {
-				fmt.Println("Error handling:", err)
-			}
-			copy.Ack(false)
+	for msg := range msgs {
+		copy := msg
+		err := s.processInput(&copy, handler)
+		if err != nil {
+			fmt.Println("Error handling:", err)
 		}
-	}()
+		copy.Ack(false)
+	}
 
-	<-forever
 	return nil
 }
 
@@ -262,7 +257,7 @@ func (s *Service) createQueue() error {
 		s.cfg.Name,
 		false,
 		true,
-		true,
+		false,
 		false,
 		nil,
 	)
