@@ -11,6 +11,21 @@ import (
 	"github.com/tariel-x/polyschema"
 )
 
+type Handler func(in DataIn) (DataOut, error)
+
+func (s Service) createInType() string {
+	return s.createType(DataIn{})
+}
+
+func (s Service) createOutType() string {
+	return s.createType(DataOut{})
+}
+
+type (
+	ExName string
+	ExType string
+)
+
 type config struct {
 	Name            string // service name
 	Event           string // event name
@@ -20,9 +35,13 @@ type config struct {
 
 	Rmq         string
 	uri         amqp.URI
-	ApiURL      string
-	ApiUser     string
-	ApiPassword string
+	APIURL      string
+	APIUser     string
+	APIPassword string
+}
+
+func (cfg config) Vhost() string {
+	return cfg.uri.Vhost
 }
 
 func newConfig(rmq, api, name, event, emit string) (config, error) {
@@ -32,53 +51,41 @@ func newConfig(rmq, api, name, event, emit string) (config, error) {
 		Event:           event,
 		Emit:            emit,
 		NumberOfWorkers: 1,
-		AutoAck:         true,
 	}
 
-	rmqUri, err := amqp.ParseURI(rmq)
+	rmqURI, err := amqp.ParseURI(rmq)
 	if err != nil {
 		return config{}, err
 	}
-	cfg.uri = rmqUri
+	cfg.uri = rmqURI
 
-	apiUrl, err := url.Parse(api)
+	APIURL, err := url.Parse(api)
 	if err != nil {
 		return config{}, err
 	}
-	cfg.ApiUser = apiUrl.User.Username()
-	cfg.ApiPassword, _ = apiUrl.User.Password()
-	apiUrl.User = nil
-	cfg.ApiURL = apiUrl.String()
+	cfg.APIUser = APIURL.User.Username()
+	cfg.APIPassword, _ = APIURL.User.Password()
+	APIURL.User = nil
+	cfg.APIURL = APIURL.String()
 
 	return cfg, nil
-}
-
-func (cfg config) Vhost() string {
-	return cfg.uri.Vhost
 }
 
 type Service struct {
 	Channel *amqp.Channel
 	Queue   *amqp.Queue
 	Client  *rh.Client
-
-	cfg config
+	cfg     config
 }
-
-func newService(cfg config) Service {
-	return Service{
-		cfg: cfg,
-	}
-}
-
-type Handler func(in DataIn) (DataOut, error)
 
 func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
 	cfg, err := newConfig(rmq, api, name, event, emit)
 	if err != nil {
 		return err
 	}
-	s := newService(cfg)
+	s := Service{
+		cfg: cfg,
+	}
 
 	// connect RMQ
 	conn, err := amqp.Dial(s.cfg.Rmq)
@@ -111,64 +118,8 @@ func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
 	return s.listen(handler)
 }
 
-func (s Service) listen(handler Handler) error {
-	msgs, err := s.Channel.Consume(
-		s.Queue.Name,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	for msg := range msgs {
-		copy := msg
-		err := s.processInput(&copy, handler)
-		if err != nil {
-			fmt.Println("Error handling:", err)
-		}
-		copy.Ack(false)
-	}
-
-	return nil
-}
-
-func (s Service) processInput(msg *amqp.Delivery, handler Handler) error {
-	input := DataIn{}
-	err := json.Unmarshal(msg.Body, &input)
-	if err != nil {
-		return fmt.Errorf("Can not unmarhsall input data: %s", err)
-	}
-	output, err := handler(input)
-	if err != nil {
-		return fmt.Errorf("Can not handle event: %s", err)
-	}
-	outBody, err := json.Marshal(output)
-	if err != nil {
-		return fmt.Errorf("Can not marshall output data: %s", err)
-	}
-
-	return s.publish(outBody)
-}
-
-func (s Service) publish(outBody []byte) error {
-	return s.Channel.Publish(
-		s.cfg.Emit,
-		"",
-		false,
-		false,
-		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        outBody,
-		})
-}
-
 func (s *Service) connectAPI() error {
-	client, err := rh.NewClient(s.cfg.ApiURL, s.cfg.ApiUser, s.cfg.ApiPassword)
+	client, err := rh.NewClient(s.cfg.APIURL, s.cfg.APIUser, s.cfg.APIPassword)
 	if err != nil {
 		return fmt.Errorf("Can not connect RMQ API: %s", err)
 	}
@@ -248,6 +199,39 @@ func (s Service) lookForExchange(name, dataType string) (string, error) {
 	return exDataType, nil
 }
 
+func (s Service) searchExchange(dataType string) (ExName, ExType, error) {
+	excs, err := s.Client.ListExchangesIn(s.cfg.Vhost())
+	if err != nil {
+		return "", "", err
+	}
+
+	var foundName ExName
+	var foundDataType ExType
+
+	for _, exc := range excs {
+		dataTypeArg, ok := exc.Arguments["datatype"]
+		if !ok {
+			continue
+		}
+		exDataType, ok := dataTypeArg.(string)
+		if !ok {
+			continue
+		}
+
+		equal, err := polyschema.SubtypeRaw(exDataType, dataType)
+		if err != nil {
+			continue
+		}
+		if equal == polyschema.TypesNotEqual {
+			continue
+		}
+		foundName = ExName(exc.Name)
+		foundDataType = ExType(exDataType)
+	}
+
+	return foundName, foundDataType, nil
+}
+
 func (s Service) createExchange(name, datatype string) error {
 	settings := rh.ExchangeSettings{
 		Type:       "fanout",
@@ -261,6 +245,62 @@ func (s Service) createExchange(name, datatype string) error {
 	return err
 }
 
+func (s Service) listen(handler Handler) error {
+	msgs, err := s.Channel.Consume(
+		s.Queue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	for msg := range msgs {
+		copy := msg
+		err := s.processInput(&copy, handler)
+		if err != nil {
+			fmt.Println("Error handling:", err)
+		}
+		copy.Ack(false)
+	}
+
+	return nil
+}
+
+func (s Service) processInput(msg *amqp.Delivery, handler Handler) error {
+	input := DataIn{}
+	err := json.Unmarshal(msg.Body, &input)
+	if err != nil {
+		return fmt.Errorf("Can not unmarhsall input data: %s", err)
+	}
+	output, err := handler(input)
+	if err != nil {
+		return fmt.Errorf("Can not handle event: %s", err)
+	}
+	outBody, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("Can not marshall output data: %s", err)
+	}
+
+	return s.publish(outBody)
+}
+
+func (s Service) publish(outBody []byte) error {
+	return s.Channel.Publish(
+		s.cfg.Emit,
+		"",
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        outBody,
+		})
+}
+
 func (s Service) createType(in interface{}) string {
 	jsonType := &jsonschema.Document{}
 	jsonType.Read(in)
@@ -272,15 +312,4 @@ func die(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-//
-// Generated
-//
-func (s Service) createInType() string {
-	return s.createType(DataIn{})
-}
-
-func (s Service) createOutType() string {
-	return s.createType(DataOut{})
 }
