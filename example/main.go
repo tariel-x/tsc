@@ -20,7 +20,7 @@ func main() {
 		os.Getenv("RMQ"),
 		os.Getenv("RMQ_API"),
 		"example",
-		"ev_a",
+		"",
 		"ev_b",
 		func(in DataIn) (DataOut, error) {
 			fmt.Println(in.A)
