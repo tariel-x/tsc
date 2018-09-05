@@ -247,6 +247,7 @@ func (s Service) searchSuitable(dataType ExType) (ExName, ExType, error) {
 		}
 		foundName = ExName(exc.Name)
 		foundDataType = exDataType
+		break
 	}
 
 	if foundName == "" {
