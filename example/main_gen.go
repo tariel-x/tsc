@@ -249,6 +249,10 @@ func (s Service) searchSuitable(dataType ExType) (ExName, ExType, error) {
 		foundDataType = exDataType
 	}
 
+	if foundName == "" {
+		return "", "", errors.New("No one suitable exchange found")
+	}
+
 	return foundName, foundDataType, nil
 }
 
