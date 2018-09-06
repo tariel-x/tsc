@@ -95,15 +95,7 @@ func New(rmq, api, name, event, emit string) (Service, error) {
 	return s, nil
 }
 
-func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
-	cfg, err := newConfig(rmq, api, name, event, emit)
-	if err != nil {
-		return err
-	}
-	s := Service{
-		cfg: cfg,
-	}
-
+func (s *Service) Liftoff(handler Handler) error {
 	// connect RMQ
 	conn, err := amqp.Dial(s.cfg.Rmq)
 	if err != nil {

@@ -16,12 +16,16 @@ type DataOut struct {
 }
 
 func main() {
-	err := Liftoff(
+	s, err := New(
 		os.Getenv("RMQ"),
 		os.Getenv("RMQ_API"),
 		"example",
 		"",
 		"ev_b",
+	)
+	die(err)
+
+	err = s.Liftoff(
 		func(in DataIn) (DataOut, error) {
 			fmt.Println(in.A)
 			return DataOut{}, nil
