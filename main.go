@@ -78,84 +78,46 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/url"
 
-	"github.com/mcuadros/go-jsonschema-generator"
+	tsc "github.com/tariel-x/tsc/base"
+
 	rh "github.com/michaelklishin/rabbit-hole"
 	"github.com/streadway/amqp"
 	"github.com/tariel-x/polyschema"
 )
 
-type config struct {
-	Name            string // service name
-	Event           string // event name
-	Emit            string // event name
-	AutoAck         bool
-	NumberOfWorkers int
+type Handler func(in {{ .InType }}) ({{ .OutType }}, error)
 
-	Rmq         string
-	uri         amqp.URI
-	ApiURL      string
-	ApiUser     string
-	ApiPassword string
+func (s Service) createInType() tsc.ExType {
+	return tsc.CreateType({{ .InType }}{})
 }
 
-func newConfig(rmq, api, name, event, emit string) (config, error) {
-	cfg := config{
-		Rmq:             rmq,
-		Name:            name,
-		Event:           event,
-		Emit:            emit,
-		NumberOfWorkers: 1,
-		AutoAck:         true,
-	}
-
-	rmqUri, err := amqp.ParseURI(rmq)
-	if err != nil {
-		return config{}, err
-	}
-	cfg.uri = rmqUri
-
-	apiUrl, err := url.Parse(api)
-	if err != nil {
-		return config{}, err
-	}
-	cfg.ApiUser = apiUrl.User.Username()
-	cfg.ApiPassword, _ = apiUrl.User.Password()
-	apiUrl.User = nil
-	cfg.ApiURL = apiUrl.String()
-
-	return cfg, nil
-}
-
-func (cfg config) Vhost() string {
-	return cfg.uri.Vhost
+func (s Service) createOutType() tsc.ExType {
+	return tsc.CreateType({{ .OutType }}{})
 }
 
 type Service struct {
-	Channel *amqp.Channel
-	Queue   *amqp.Queue
-	Client  *rh.Client
-
-	cfg config
+	Channel     *amqp.Channel
+	Queue       *amqp.Queue
+	Client      *rh.Client
+	cfg         tsc.Config
+	ListeningEx tsc.ExName
 }
 
-func newService(cfg config) Service {
-	return Service{
+func New(rmq, api, name, event, emit string) (Service, error) {
+	cfg, err := tsc.NewConfig(rmq, api, name, event, emit)
+	if err != nil {
+		return Service{}, err
+	}
+	s := Service{
 		cfg: cfg,
 	}
+	return s, nil
 }
 
-type Handler func(in {{ .InType }}) ({{ .OutType }}, error)
-
-func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
-	cfg, err := newConfig(rmq, api, name, event, emit)
-	if err != nil {
-		return err
-	}
-	s := newService(cfg)
-
+func (s *Service) Liftoff(handler Handler) error {
 	// connect RMQ
 	conn, err := amqp.Dial(s.cfg.Rmq)
 	if err != nil {
@@ -180,11 +142,157 @@ func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
 	}
 
 	// declare input queue
-	if err := s.createQueue(); err != nil {
-		return err
+	if err := s.createListenQueue(); err != nil {
+		return fmt.Errorf("Can not create listening queue: %s", err)
 	}
 
 	return s.listen(handler)
+}
+
+func (s Service) listeningExName() tsc.ExName {
+	if s.cfg.Event != "" {
+		return tsc.ExName(s.cfg.Event)
+	}
+	return s.ListeningEx
+}
+
+func (s *Service) setListeningEx(name tsc.ExName) {
+	s.ListeningEx = name
+}
+
+func (s *Service) connectAPI() error {
+	client, err := rh.NewClient(s.cfg.APIURL, s.cfg.APIUser, s.cfg.APIPassword)
+	if err != nil {
+		return fmt.Errorf("Can not connect RMQ API: %s", err)
+	}
+	s.Client = client
+	return nil
+}
+
+func (s *Service) createListenQueue() error {
+	q, err := s.Channel.QueueDeclare(
+		s.cfg.Name,
+		false,
+		true,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("Can not declare queue %s", err)
+	}
+	s.Queue = &q
+
+	return s.Channel.QueueBind(
+		q.Name,
+		"",
+		string(s.listeningExName()),
+		false,
+		nil,
+	)
+}
+
+func (s *Service) createExchanges() error {
+	var err error
+	var exDataType tsc.ExType
+	inDataType := s.createInType()
+	if s.listeningExName() != "" {
+		exDataType, err = s.getEx(s.listeningExName(), inDataType)
+		if err != nil {
+			return fmt.Errorf("Can not get in exchange %s: %s", s.listeningExName(), err)
+		}
+		equal, err := tsc.Subtype(inDataType, exDataType)
+		if err != nil {
+			return err
+		}
+		if equal == polyschema.TypesNotEqual {
+			return fmt.Errorf("Can not listen event %s: incompatible types", s.listeningExName())
+		}
+	} else {
+		var exName tsc.ExName
+		exName, exDataType, err = s.searchSuitable(inDataType)
+		if err != nil {
+			return fmt.Errorf("Erorr while searching suitable exchange: %s", err)
+		}
+		s.setListeningEx(exName)
+	}
+
+	outDataType := s.createOutType()
+	exDataType, err = s.getEx(tsc.ExName(s.cfg.Emit), outDataType)
+	if err != nil {
+		return fmt.Errorf("Can not get out exchange %s: %s", s.cfg.Emit, err)
+	}
+	equal, err := tsc.Subtype(exDataType, outDataType)
+	if err != nil {
+		return err
+	}
+	if equal == polyschema.TypesNotEqual {
+		return fmt.Errorf("Can not emit event %s: incompatible types", s.cfg.Emit)
+	}
+	return nil
+}
+
+func (s Service) getEx(name tsc.ExName, dataType tsc.ExType) (tsc.ExType, error) {
+	exc, err := s.Client.GetExchange(s.cfg.Vhost(), string(name))
+	if err != nil && err.Error() != "Error 404 (Object Not Found): Not Found" {
+		return "", fmt.Errorf("Can not get exchange %s: %s", name, err)
+	}
+	if exc == nil {
+		return dataType, s.createExchange(name, dataType)
+	}
+
+	exDataType, err := s.exDataType(exc.Arguments)
+	if err != nil {
+		return "", fmt.Errorf("Exchange %s exists but can not be user: %s", err, name)
+	}
+
+	return exDataType, nil
+}
+
+func (s Service) searchSuitable(dataType tsc.ExType) (tsc.ExName, tsc.ExType, error) {
+	excs, err := s.Client.ListExchangesIn(s.cfg.Vhost())
+	if err != nil {
+		return "", "", fmt.Errorf("Can not get list of exchanges: %s", err)
+	}
+
+	var foundName tsc.ExName
+	var foundDataType tsc.ExType
+
+	for _, exc := range excs {
+		exDataType, err := s.exDataType(exc.Arguments)
+		if err != nil {
+			continue
+		}
+		equal, err := tsc.Subtype(exDataType, dataType)
+		if err != nil {
+			continue
+		}
+		if equal == polyschema.TypesNotEqual {
+			continue
+		}
+		foundName = tsc.ExName(exc.Name)
+		foundDataType = exDataType
+		break
+	}
+
+	if foundName == "" {
+		return "", "", errors.New("No one suitable exchange found")
+	}
+
+	return foundName, foundDataType, nil
+}
+
+func (s Service) createExchange(name tsc.ExName, dataType tsc.ExType) error {
+	settings := rh.ExchangeSettings{
+		Type:       "fanout",
+		Durable:    true,
+		AutoDelete: false,
+		Arguments: map[string]interface{}{
+			tsc.TypeArgName: string(dataType),
+		},
+	}
+	_, err := s.Client.DeclareExchange(s.cfg.Vhost(), string(name), settings)
+	return err
 }
 
 func (s Service) listen(handler Handler) error {
@@ -243,122 +351,19 @@ func (s Service) publish(outBody []byte) error {
 		})
 }
 
-func (s *Service) connectAPI() error {
-	client, err := rh.NewClient(s.cfg.ApiURL, s.cfg.ApiUser, s.cfg.ApiPassword)
-	if err != nil {
-		return fmt.Errorf("Can not connect RMQ API: %s", err)
-	}
-	s.Client = client
-	return nil
-}
-
-func (s *Service) createQueue() error {
-	q, err := s.Channel.QueueDeclare(
-		s.cfg.Name,
-		false,
-		true,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-	s.Queue = &q
-
-	return s.Channel.QueueBind(
-		q.Name,
-		"",
-		s.cfg.Event,
-		false,
-		nil,
-	)
-}
-
-func (s Service) createExchanges() error {
-	inDataType := s.createInType()
-	exDataType, err := s.lookForExchange(s.cfg.Event, inDataType)
-	if err != nil {
-		return err
-	}
-	equal, err := polyschema.SubtypeRaw(inDataType, exDataType)
-	if err != nil {
-		return err
-	}
-	if equal == polyschema.TypesNotEqual {
-		return fmt.Errorf("Can not listen event %s: incompatible types", s.cfg.Event)
-	}
-
-	outDataType := s.createOutType()
-	exDataType, err = s.lookForExchange(s.cfg.Emit, outDataType)
-	if err != nil {
-		return err
-	}
-	equal, err = polyschema.SubtypeRaw(exDataType, outDataType)
-	if err != nil {
-		return err
-	}
-	if equal == polyschema.TypesNotEqual {
-		return fmt.Errorf("Can not emit event %s: incompatible types", s.cfg.Emit)
-	}
-	return nil
-}
-
-func (s Service) lookForExchange(name, dataType string) (string, error) {
-	exc, err := s.Client.GetExchange(s.cfg.Vhost(), name)
-	if err != nil && err.Error() != "Error 404 (Object Not Found): Not Found" {
-		return "", err
-	}
-	if exc == nil {
-		return dataType, s.createExchange(name, dataType)
-	}
-
-	dataTypeArg, ok := exc.Arguments["datatype"]
+func (s Service) exDataType(args map[string]interface{}) (tsc.ExType, error) {
+	dataTypeArg, ok := args[tsc.TypeArgName]
 	if !ok {
-		return "", fmt.Errorf("Exchange %s exists but is untyped", name)
+		return "", errors.New("no datatype argument")
 	}
 	exDataType, ok := dataTypeArg.(string)
 	if !ok {
-		return "", fmt.Errorf("Exchange %s exists but type argument is not string", name)
+		return "", errors.New("datatype argument is not a string")
 	}
-	return exDataType, nil
-}
-
-func (s Service) createExchange(name, datatype string) error {
-	settings := rh.ExchangeSettings{
-		Type:       "fanout",
-		Durable:    true,
-		AutoDelete: false,
-		Arguments: map[string]interface{}{
-			"datatype": datatype,
-		},
+	if exDataType == "" {
+		return "", errors.New("datatype is empty")
 	}
-	_, err := s.Client.DeclareExchange(s.cfg.Vhost(), name, settings)
-	return err
-}
-
-func (s Service) createType(in interface{}) string {
-	jsonType := &jsonschema.Document{}
-	jsonType.Read(in)
-	marshalledType, _ := json.Marshal(jsonType)
-	return string(marshalledType)
-}
-
-func die(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-//
-// Generated
-//
-func (s Service) createInType() string {
-	return s.createType({{ .InType }}{})
-}
-
-func (s Service) createOutType() string {
-	return s.createType({{ .OutType }}{})
+	return tsc.ExType(exDataType), nil
 }
 
 `))

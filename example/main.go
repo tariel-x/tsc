@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	tsc "github.com/tariel-x/tsc/base"
 )
 
 // go:generate tsc DataIn DataOut
@@ -23,7 +25,7 @@ func main() {
 		"",
 		"ev_b",
 	)
-	die(err)
+	tsc.Die(err)
 
 	err = s.Liftoff(
 		func(in DataIn) (DataOut, error) {
@@ -31,5 +33,5 @@ func main() {
 			return DataOut{}, nil
 		},
 	)
-	die(err)
+	tsc.Die(err)
 }
