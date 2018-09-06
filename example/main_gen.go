@@ -84,6 +84,17 @@ type Service struct {
 	ListeningEx ExName
 }
 
+func New(rmq, api, name, event, emit string) (Service, error) {
+	cfg, err := newConfig(rmq, api, name, event, emit)
+	if err != nil {
+		return Service{}, err
+	}
+	s := Service{
+		cfg: cfg,
+	}
+	return s, nil
+}
+
 func Liftoff(rmq, api, name, event, emit string, handler Handler) error {
 	cfg, err := newConfig(rmq, api, name, event, emit)
 	if err != nil {
@@ -167,7 +178,7 @@ func (s *Service) createListenQueue() error {
 	)
 }
 
-func (s Service) createExchanges() error {
+func (s *Service) createExchanges() error {
 	var err error
 	var exDataType ExType
 	inDataType := s.createInType()
