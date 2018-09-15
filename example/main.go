@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	tsc "github.com/tariel-x/tsc/base"
+	"github.com/tariel-x/tsc/base"
 )
 
-// go:generate tsc DataIn DataOut
+//go:generate tsc main.go DataIn DataOut
 
 type DataIn struct {
 	A string `json:"a"`
@@ -25,7 +25,7 @@ func main() {
 		"",
 		"ev_b",
 	)
-	tsc.Die(err)
+	base.Die(err)
 
 	err = s.Liftoff(
 		func(in DataIn) (DataOut, error) {
@@ -33,5 +33,5 @@ func main() {
 			return DataOut{}, nil
 		},
 	)
-	tsc.Die(err)
+	base.Die(err)
 }
