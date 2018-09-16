@@ -322,24 +322,35 @@ func (s Service) listen(handler Handler) error {
 }
 
 func (s Service) processInput(msg *amqp.Delivery, handler Handler) error {
-	input := {{ .InType }}{}
+	if _, ok := msg.Headers["error"]; ok {
+		return s.publish(msg.Body, msg.Headers)
+	}
+
+	input := DataIn{}
 	err := json.Unmarshal(msg.Body, &input)
 	if err != nil {
-		return fmt.Errorf("Can not unmarhsall input data: %s", err)
+		errHeaders := msg.Headers
+		errHeaders["error"] = fmt.Sprintf("%s: can not unmarhsall input data: %s", s.cfg.Name, err)
+		return s.publish(msg.Body, errHeaders)
 	}
 	output, err := handler(input)
 	if err != nil {
-		return fmt.Errorf("Can not handle event: %s", err)
+		errHeaders := msg.Headers
+		errHeaders["error"] = fmt.Sprintf("%s: can not handle event: %s", s.cfg.Name, err)
+		return s.publish(msg.Body, errHeaders)
 	}
 	outBody, err := json.Marshal(output)
 	if err != nil {
-		return fmt.Errorf("Can not marshall output data: %s", err)
+		errHeaders := msg.Headers
+		errHeaders["error"] = fmt.Sprintf("%s: can not marshall output data: %s", s.cfg.Name, err)
+		return s.publish(msg.Body, errHeaders)
 	}
 
-	return s.publish(outBody)
+	return s.publish(outBody, msg.Headers)
 }
 
-func (s Service) publish(outBody []byte) error {
+
+func (s Service) publish(outBody []byte, headers amqp.Table) error {
 	return s.Channel.Publish(
 		s.cfg.Emit,
 		"",
@@ -348,6 +359,7 @@ func (s Service) publish(outBody []byte) error {
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        outBody,
+			Headers:     headers,
 		})
 }
 
